@@ -26,12 +26,9 @@ const CO2Monitor = () => {
       // Handle crossing midnight
       if (elapsedMinutes < 0) {
         elapsedMinutes += 24 * 60;
-      } else {
-        // If CO2 not decreasing, remove future projections but keep historical
-        setProjectedPoints(prev => 
-          prev.filter(p => p.minutes < elapsedMinutes).sort((a, b) => a.minutes - b.minutes)
-        );
       }
+      // Remove all previous projection points; we will rebuild the projection
+      setProjectedPoints([]);
     }
     
     const newPoint = {
@@ -49,9 +46,8 @@ const CO2Monitor = () => {
     if (updatedMeasured.length >= 2) {
       const newSegment = buildProjectionSegment(updatedMeasured);
       
-      // Merge new segment with existing projections
-      const mergedProjected = mergeProjectionSegments([...projectedPoints, ...newSegment]);
-      setProjectedPoints(mergedProjected);
+      // Replace any existing projections with the freshly calculated segment
+      setProjectedPoints(newSegment);
     }
 
     // Clear inputs
@@ -59,40 +55,48 @@ const CO2Monitor = () => {
     setCurrentCO2('');
   };
 
+  // Build a straight-line projection that connects the latest measured
+  // reading directly to the ideal buffer level (550 ppm)
+  // The table shows exactly the values that appear in the projected line
   const buildProjectionSegment = (measuredData) => {
     if (measuredData.length < 2) return [];
 
-    const lastTwoPoints = measuredData.slice(-2);
-    const [prevPoint, currentPoint] = lastTwoPoints;
-    
-    // Calculate rate of change (ppm per minute)
+    const [prevPoint, currentPoint] = measuredData.slice(-2);
+
     const timeDiff = currentPoint.minutes - prevPoint.minutes;
+    if (timeDiff === 0) return [];
+
     const co2Diff = currentPoint.co2 - prevPoint.co2;
-    const rate = co2Diff / timeDiff;
+    const rate = co2Diff / timeDiff; // ppm per minute (negative if decreasing)
 
     // Only project if CO2 is decreasing
     if (rate >= 0) return [];
 
-    const projectionSegment = [];
-    const startMinutes = currentPoint.minutes;
-    const startCO2 = currentPoint.co2;
+    // Use the current point's minutes as the first data point
+    const currentCO2 = currentPoint.co2;
 
-    // Project forward in 5-minute intervals
-    for (let i = 5; i <= 120; i += 5) {
-      const futureMinutes = startMinutes + i;
-      const projectedCO2 = Math.round(startCO2 + (rate * i));
-      
-      // Stop projecting if CO2 would go below 400 ppm
-      if (projectedCO2 < 400) break;
-      
-      projectionSegment.push({
-        minutes: futureMinutes,
-        co2: projectedCO2,
+    // Minutes required to hit 550 ppm (rate is negative)
+    const minutesToIdeal = Math.round((550 - currentCO2) / rate);
+
+    // If the ideal level is already reached, no projection needed
+    if (minutesToIdeal <= 0) return [];
+    
+    // Calculate the end minute (when CO2 reaches 550)
+    const endMinute = currentPoint.minutes + minutesToIdeal;
+    
+    // Create exactly two points for the projection line that will match the table
+    return [
+      {
+        minutes: currentPoint.minutes,
+        co2: currentCO2,
         type: 'projected'
-      });
-    }
-
-    return projectionSegment;
+      },
+      {
+        minutes: endMinute,
+        co2: 550,
+        type: 'projected'
+      }
+    ];
   };
 
   const mergeProjectionSegments = (allProjected) => {
@@ -142,7 +146,9 @@ const CO2Monitor = () => {
   };
 
   // Combine measured and projected data for the chart
-  const chartData = [...measuredPoints, ...projectedPoints].sort((a, b) => a.minutes - b.minutes);
+  // Filter out any projected points that aren't part of our final two-point projection
+  const validProjections = projectedPoints.length === 2 ? projectedPoints : [];
+  const chartData = [...measuredPoints, ...validProjections].sort((a, b) => a.minutes - b.minutes);
 
   const getCO2Status = (co2) => {
     if (co2 <= 550) return { text: 'Ideal', color: 'text-green-400', bg: 'bg-green-900/50' };
@@ -168,8 +174,8 @@ const CO2Monitor = () => {
     }
   }
 
-  // Prepare chart data - combine measured and projected points
-  const allChartData = [...measuredPoints, ...projectedPoints].sort((a, b) => a.minutes - b.minutes);
+  // Use separate data arrays for measured and projected points
+  // so each line draws exactly the points we want
 
   // Custom dark theme for chart
   const chartTheme = {
@@ -276,10 +282,13 @@ const CO2Monitor = () => {
             CO2 Trend & Projection
           </h3>
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <LineChart width={700} height={400} data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <LineChart width={700} height={400} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.gridColor} />
               <XAxis 
+                type="number"
                 dataKey="minutes" 
+                domain={['dataMin', 'dataMax']}
+                allowDecimals={false}
                 label={{ value: 'Minutes from start', position: 'insideBottom', offset: -5, fill: chartTheme.textColor }}
                 stroke={chartTheme.textColor}
                 tick={{ fill: chartTheme.textColor }}
@@ -321,24 +330,18 @@ const CO2Monitor = () => {
                 name="Measured"
               />
               
-              {/* Projected data */}
+              {/* Projected data - using a direct line between exact table values */}
               {projectedPoints.length > 0 && (
                 <Line 
                   type="linear" 
                   dataKey="co2" 
-                  data={[...projectedPoints].sort((a, b) => a.minutes - b.minutes)}
+                  data={projectedPoints}
                   stroke="#a78bfa" 
                   strokeWidth={2}
                   strokeDasharray="5 5"
-                  dot={(props) => {
-                    const { payload, cx, cy } = props;
-                    // Hide dots for anchor points that overlap with measured points
-                    if (measuredPoints.some(m => m.minutes === payload.minutes)) {
-                      return null;
-                    }
-                    return <circle cx={cx} cy={cy} r={4} fill="#a78bfa" />;
-                  }}
+                  dot={{ fill: "#a78bfa", r: 4 }}
                   name="Projected"
+                  isAnimationActive={false}
                 />
               )}
             </LineChart>
@@ -383,6 +386,39 @@ const CO2Monitor = () => {
           <Wind className="mx-auto h-12 w-12 text-blue-400 mb-4" />
           <h3 className="text-lg font-medium text-gray-200 mb-2">No data yet</h3>
           <p className="text-gray-400">Add your first CO2 measurement to get started</p>
+        </div>
+      )}
+
+      {/* Projected Data Table */}
+      {projectedPoints.length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-lg font-semibold mb-3 text-gray-100 flex items-center gap-2">
+            <TrendingDown size={18} className="text-purple-400" />
+            Projected Measurements
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full bg-gray-800 border border-gray-700">
+              <thead className="bg-gray-900">
+                <tr>
+                  <th className="px-4 py-2 border-b border-gray-700 text-left text-sm font-medium text-gray-300">Minutes Elapsed</th>
+                  <th className="px-4 py-2 border-b border-gray-700 text-left text-sm font-medium text-gray-300">CO2 (ppm)</th>
+                  <th className="px-4 py-2 border-b border-gray-700 text-left text-sm font-medium text-gray-300">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projectedPoints.map((point, index) => {
+                  const pointStatus = getCO2Status(point.co2);
+                  return (
+                    <tr key={index} className="hover:bg-gray-700">
+                      <td className="px-4 py-2 border-b border-gray-700 text-sm text-gray-300">{point.minutes}</td>
+                      <td className="px-4 py-2 border-b border-gray-700 text-sm font-semibold text-gray-100">{point.co2}</td>
+                      <td className={`px-4 py-2 border-b border-gray-700 text-sm ${pointStatus.color}`}>{pointStatus.text}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
