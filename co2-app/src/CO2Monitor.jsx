@@ -7,9 +7,24 @@ const CO2Monitor = () => {
   const [projectedPoints, setProjectedPoints] = useState([]);
   const [currentTime, setCurrentTime] = useState('');
   const [currentCO2, setCurrentCO2] = useState('');
+  
+  // Function to set the current time
+  const setCurrentTimeToNow = () => {
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    setCurrentTime(`${hours}:${minutes}`);
+  };
 
   const addDataPoint = () => {
     if (!currentTime || !currentCO2) return;
+    
+    // Validate time format
+    const timePattern = /^([01]?[0-9]|2[0-3]):([0-5][0-9])$/;
+    if (!timePattern.test(currentTime)) {
+      alert('Please enter time in HH:MM format');
+      return;
+    }
 
     const [hours, minutes] = currentTime.split(':').map(Number);
     const totalMinutes = hours * 60 + minutes;
@@ -240,13 +255,55 @@ const CO2Monitor = () => {
         <div className="flex gap-4 items-end">
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-300 mb-1">Time</label>
-            <input
-              type="time"
-              value={currentTime}
-              onChange={(e) => setCurrentTime(e.target.value)}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 text-gray-100 rounded-md focus:ring-blue-500 focus:border-blue-500"
-              placeholder="HH:MM"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={currentTime}
+                onChange={(e) => {
+                  let value = e.target.value;
+                  
+                  // Remove all non-digits except colon
+                  value = value.replace(/[^0-9:]/g, '');
+                  
+                  // Handle direct input of 3 or 4 digits without colon (e.g., 1825)
+                  if (/^\d{3,4}$/.test(value)) {
+                    const hours = value.substring(0, 2);
+                    const minutes = value.substring(2);
+                    value = `${hours}:${minutes}`;
+                  }
+                  
+                  // If the user already typed a colon, ensure proper format
+                  if (value.includes(':')) {
+                    const [hours, minutes] = value.split(':');
+                    
+                    // Validate and limit hours to 23
+                    const validHours = hours ? Math.min(parseInt(hours) || 0, 23).toString().padStart(2, '0') : '00';
+                    
+                    // Validate and limit minutes to 59
+                    let validMinutes = '';
+                    if (minutes) {
+                      validMinutes = minutes.length > 2 ? minutes.substring(0, 2) : minutes;
+                      if (parseInt(validMinutes) > 59) validMinutes = '59';
+                    }
+                    
+                    value = validHours + (value.includes(':') ? ':' + validMinutes : '');
+                  }
+                  
+                  // Update state with the formatted value
+                  setCurrentTime(value);
+                }}
+                className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 text-gray-100 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                placeholder="HH:MM"
+                maxLength="5"
+              />
+              <button
+                type="button"
+                onClick={setCurrentTimeToNow}
+                className="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Now
+              </button>
+            </div>
           </div>
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-300 mb-1">CO2 Level (ppm)</label>
